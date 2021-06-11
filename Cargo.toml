@@ -1,8 +1,12 @@
-[package]
+[project]
 name = "windex"
 version = "0.1.0"
 authors = ["Brighton Sikarskie <brighton.sikarskie@tuta.io>"]
 edition = "2018"
+description = "A simple rust window manager"
+readme = "README.md"
+repository = "https://github.com/bsikar/windex"
+license = "MIT"
 
 [dependencies]
 x11 = { version = "2.18.2", features = ["xlib", "xlib_xcb"] }
