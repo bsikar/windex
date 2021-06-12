@@ -32,7 +32,7 @@ fn main() {
 
     let dpy = unsafe { XOpenDisplay(NULL()) };
     let mut wm = WindowManager {
-        dpy: dpy,
+        dpy,
         xerrorstart: None,
         xerrorxlib: None,
         xerror: None,
