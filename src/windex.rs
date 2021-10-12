@@ -3,6 +3,7 @@ use crate::config::*;
 
 use fork::{daemon, Fork};
 use std::cmp::max;
+use std::mem::MaybeUninit;
 use std::os::raw::c_int;
 use std::process::Command;
 use std::ptr::{null, null_mut};
@@ -68,6 +69,14 @@ impl<'a> Windex<'a> {
         // If a cursor is set, it will be used when the pointer is in the window.
         unsafe { XDefineCursor(display, root_window, cursor) };
 
+        // This fixes a bug:
+        // https://stackoverflow.com/questions/68894089/xnextevent-in-rust-segfaults
+        let event = unsafe {
+            let mut event = MaybeUninit::uninit();
+            XNextEvent(display, event.as_mut_ptr());
+            &mut event.assume_init()
+        };
+
         let mut wm = Self {
             display,
             root_window,
@@ -79,7 +88,7 @@ impl<'a> Windex<'a> {
             workspace_y: 0,
             workspace: 1,
             numlock: 0,
-            event: null_mut(),
+            event,
             mouse: null_mut(),
             config: Config::new(),
             client: null_mut(),
