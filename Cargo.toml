@@ -9,5 +9,9 @@ repository = "https://github.com/bsikar/windex"
 license = "MIT"
 
 [dependencies]
-x11 = { version = "2.18.2", features = ["xlib", "xlib_xcb"] }
+x11 = { version = "2.19.1", features = ["xlib"] }
 clap = "2.33.3"
+signal-hook = "0.3.10"
+fork = "0.1.18"
+
+[features]

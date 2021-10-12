@@ -1,65 +1,23 @@
-use std::os::raw::{c_int, c_long, c_ulong};
-use std::ptr::{null as NULL, null_mut as NULL_MUT};
-use x11::xlib::*;
-use x11::xlib_xcb::*;
+// good resource:
+// https://tronche.com/gui/x/xlib/
+mod client;
+mod config;
+mod windex;
 
-struct WindowManager {
-    dpy: *mut Display,
-    xerrorstart: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int>,
-    xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int>,
-    xerror: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int>,
-    xcon: *mut xcb_connection_t,
-}
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use windex::Windex;
 
-impl WindowManager {
-    unsafe fn check_other_wm(&mut self) {
-        self.xerrorxlib = XSetErrorHandler(self.xerrorstart);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // When a child processes ends, this process will not be signaled, it will be ignored.
+    let term = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGCHLD, Arc::clone(&term))?;
 
-        // this causes an error if another wm is running
-        XSelectInput(
-            self.dpy,
-            XDefaultRootWindow(self.dpy),
-            SubstructureRedirectMask,
-        );
-        XSync(self.dpy, 0);
-        XSetErrorHandler(self.xerror);
-        XSync(self.dpy, 0);
+    let mut wm = Windex::new();
+
+    loop {
+        wm.handle_events();
+
+        std::thread::yield_now();
     }
-}
-
-fn main() {
-    // CLAP cli parameter stuff here
-
-    let dpy = unsafe { XOpenDisplay(NULL()) };
-    let mut wm = WindowManager {
-        dpy,
-        xerrorstart: None,
-        xerrorxlib: None,
-        xerror: None,
-        xcon: unsafe { XGetXCBConnection(dpy) },
-    };
-
-    if wm.dpy == NULL_MUT() {
-        panic!("cannot open display");
-    }
-
-    if wm.xcon == NULL_MUT() {
-        panic!("cannot get xcb connection");
-    }
-
-    unsafe { wm.check_other_wm() };
-
-    loop { std::thread::yield_now() };
-
-    // XrmInitialize()
-    // loadxrdb()
-    // setup()
-    // scan()
-    // runAutostart()
-    // run()
-    //
-    // RESTART:
-    //  execvp(); // (argv[0], argv)
-    // cleanup()
-    // close x
 }
