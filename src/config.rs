@@ -1,15 +1,12 @@
 use std::os::raw::c_uint;
-use x11::keysym::*;
+use x11::keysym::XK_Return;
 use x11::xlib::{KeySym, Mod1Mask};
 
 pub const MOD: c_uint = Mod1Mask;
 
 #[derive(Copy, Clone)]
 pub enum Functions<'a> {
-    WindowKill,
-    WindowCenter,
-    WindowFullScreen,
-    Run(&'a str),
+    Run(&'a str, &'a [&'a str]),
 }
 
 pub struct Key<'a> {
@@ -36,10 +33,7 @@ impl<'a> Config<'a> {
     pub fn new() -> Self {
         use Functions::*;
 
-        let keys = vec![
-            Key::new(MOD, XK_q as u64, WindowKill),
-            Key::new(MOD, XK_Return as u64, Run("st")),
-        ];
+        let keys = vec![Key::new(MOD, XK_Return as u64, Run("st", &[]))];
 
         Self { keys }
     }

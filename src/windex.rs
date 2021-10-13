@@ -1,37 +1,24 @@
 use crate::client::*;
 use crate::config::*;
 
-use fork::{daemon, Fork};
-use std::cmp::max;
-use std::mem::MaybeUninit;
+use fork::{fork, Fork};
+use std::mem::{drop, MaybeUninit};
 use std::os::raw::c_int;
 use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::slice;
 use x11::keysym::{XK_Num_Lock, XK_leftpointer};
-use x11::xlib::{
-    AnyKey, AnyModifier, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask,
-    ConfigureRequest, ControlMask, CurrentTime, DestroyNotify, Display, EnterNotify,
-    EnterWindowMask, GrabModeAsync, KeyPress, LockMask, MapRequest, MappingKeyboard,
-    MappingModifier, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
-    PointerMotionMask, RevertToParent, ShiftMask, StructureNotifyMask, SubstructureRedirectMask,
-    True, Window, XButtonEvent, XCheckTypedEvent, XConfigureWindow, XCreateFontCursor,
-    XDefaultScreen, XDefineCursor, XDisplayHeight, XDisplayWidth, XErrorEvent, XEvent,
-    XFreeModifiermap, XGetGeometry, XGetModifierMapping, XGrabButton, XGrabKey, XKeysymToKeycode,
-    XKillClient, XMoveResizeWindow, XNextEvent, XOpenDisplay, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSetErrorHandler, XSetInputFocus,
-    XUngrabKey, XWindowChanges, XkbKeycodeToKeysym,
-};
+use x11::xlib::*;
 
 pub struct Windex<'a> {
     display: *mut Display,
     root_window: Window,
     display_height: i32,
     display_width: i32,
-    workspace_width: u32,
-    workspace_height: u32,
-    workspace_x: i32,
-    workspace_y: i32,
+    window_width: u32,
+    window_height: u32,
+    window_x: i32,
+    window_y: i32,
     workspace: u8,
     numlock: u32,
     event: *mut XEvent,
@@ -69,26 +56,18 @@ impl<'a> Windex<'a> {
         // If a cursor is set, it will be used when the pointer is in the window.
         unsafe { XDefineCursor(display, root_window, cursor) };
 
-        // This fixes a bug:
-        // https://stackoverflow.com/questions/68894089/xnextevent-in-rust-segfaults
-        let event = unsafe {
-            let mut event = MaybeUninit::uninit();
-            XNextEvent(display, event.as_mut_ptr());
-            &mut event.assume_init()
-        };
-
         let mut wm = Self {
             display,
             root_window,
             display_height,
             display_width,
-            workspace_width: 0,
-            workspace_height: 0,
-            workspace_x: 0,
-            workspace_y: 0,
+            window_width: 0,
+            window_height: 0,
+            window_x: 0,
+            window_y: 0,
             workspace: 1,
             numlock: 0,
-            event,
+            event: null_mut(),
             mouse: null_mut(),
             config: Config::new(),
             client: null_mut(),
@@ -168,18 +147,22 @@ impl<'a> Windex<'a> {
 
     #[allow(non_upper_case_globals)]
     pub fn handle_events(&mut self) {
-        unsafe { XNextEvent(self.display, self.event) };
+        // This fixes a bug:
+        // https://stackoverflow.com/questions/68894089/xnextevent-in-rust-segfaults
+        if self.event.is_null() {
+            self.event = unsafe {
+                let mut event = MaybeUninit::uninit();
+                XNextEvent(self.display, event.as_mut_ptr());
+                &mut event.assume_init()
+            };
+        }
+
+        dbg!("handle");
 
         match unsafe { (*self.event).type_ } {
             ButtonPress => self.button_press(),
-            ButtonRelease => self.button_release(),
-            ConfigureRequest => self.configure_request(),
             KeyPress => self.key_press(),
             MapRequest => self.map_request(),
-            MappingNotify => self.mapping_notify(),
-            DestroyNotify => self.notify_destroy(),
-            EnterNotify => self.notify_enter(),
-            MotionNotify => unsafe { self.notify_motion() },
             _ => {}
         }
     }
@@ -192,13 +175,13 @@ impl<'a> Windex<'a> {
                 XGetGeometry(
                     self.display,
                     subwindow,
-                    0 as *mut u64,
-                    self.workspace_x as *mut i32,
-                    self.workspace_y as *mut i32,
-                    self.workspace_width as *mut u32,
-                    self.workspace_height as *mut u32,
-                    0 as *mut u32,
-                    0 as *mut u32,
+                    null_mut(),
+                    self.window_x as *mut i32,
+                    self.window_y as *mut i32,
+                    self.window_width as *mut u32,
+                    self.window_height as *mut u32,
+                    null_mut(),
+                    null_mut(),
                 );
 
                 XRaiseWindow(self.display, subwindow);
@@ -208,45 +191,29 @@ impl<'a> Windex<'a> {
         }
     }
 
-    fn button_release(&mut self) {
-        unsafe { (*self.mouse).subwindow = 0 };
-    }
-
-    fn configure_request(&self) {
-        let ev = unsafe { (*self.event).configure_request };
-
-        let mut changes = XWindowChanges {
-            x: ev.x,
-            y: ev.y,
-            width: ev.width,
-            height: ev.height,
-            sibling: ev.above,
-            stack_mode: ev.detail,
-            border_width: ev.border_width,
-        };
-
-        unsafe { XConfigureWindow(self.display, ev.window, ev.value_mask as u32, &mut changes) };
-    }
-
     fn mod_clean(&self, mask: u32) -> u32 {
         mask & !(self.numlock | LockMask)
             & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask)
     }
 
-    fn window_kill(&self) {
-        if !self.cursor.is_null() {
-            unsafe { XKillClient(self.display, (*self.cursor).window) };
-        }
-    }
-
-    fn window_center(&self) {}
-    fn window_fullscreen(&self) {}
-
-    fn run(&self, command: &'a str) {
-        if let Ok(Fork::Child) = daemon(false, false) {
-            Command::new(command)
-                .output()
-                .expect(format!("failed to execute {}", command).as_str());
+    fn run(&self, command: &'a str, args: &'a [&'a str]) {
+        match fork() {
+            Ok(Fork::Parent(_)) => {
+                if unsafe { XInitThreads() } == 0 {
+                    panic!("XInitThreads failed");
+                }
+            }
+            Ok(Fork::Child) => {
+                if !self.display.is_null() {
+                    // NOTE this might break shit
+                    unsafe { drop(XConnectionNumber(self.display)) };
+                }
+                Command::new(command)
+                    .args(args)
+                    .spawn()
+                    .unwrap_or_else(|_| panic!("failed to execute {}", command));
+            }
+            Err(e) => panic!("{}", e),
         }
     }
 
@@ -261,10 +228,7 @@ impl<'a> Windex<'a> {
                 }
             {
                 match key.function {
-                    Functions::WindowKill => self.window_kill(),
-                    Functions::WindowCenter => self.window_center(),
-                    Functions::WindowFullScreen => self.window_fullscreen(),
-                    Functions::Run(c) => self.run(c),
+                    Functions::Run(c, a) => self.run(c, a),
                 }
             }
         }
@@ -279,17 +243,66 @@ impl<'a> Windex<'a> {
             XGetGeometry(
                 self.display,
                 window,
-                0 as *mut u64,
-                self.workspace_x as *mut i32,
-                self.workspace_y as *mut i32,
-                self.workspace_width as *mut u32,
-                self.workspace_height as *mut u32,
-                0 as *mut u32,
-                0 as *mut u32,
+                null_mut(),
+                self.window_x as *mut i32,
+                self.window_y as *mut i32,
+                self.window_width as *mut u32,
+                self.window_height as *mut u32,
+                null_mut(),
+                null_mut(),
+            );
+            self.win_add(window);
+
+            self.cursor = (*self.client).prev;
+
+            if self.window_x + self.window_y == 0 {
+                self.win_center();
+            }
+
+            XMapWindow(self.display, window);
+
+            self.win_focus();
+        }
+    }
+
+    fn win_center(&self) {
+        if self.cursor.is_null() {
+            return;
+        }
+
+        unsafe {
+            XGetGeometry(
+                self.display,
+                (*self.cursor).window,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                self.window_width as *mut u32,
+                self.window_height as *mut u32,
+                null_mut(),
+                null_mut(),
             );
 
-            self.win_add(window);
+            XMoveWindow(
+                self.display,
+                (*self.cursor).window,
+                (self.display_width - self.window_width as i32) / 2,
+                (self.display_height - self.window_height as i32) / 2,
+            );
         }
+    }
+
+    fn win_focus(&mut self) {
+        self.cursor = self.client;
+
+        unsafe {
+            XSetInputFocus(
+                self.display,
+                (*self.cursor).window,
+                RevertToParent,
+                CurrentTime,
+            )
+        };
     }
 
     fn win_add(&mut self, window: Window) {
@@ -311,122 +324,6 @@ impl<'a> Windex<'a> {
         }
 
         self.workspaces[self.workspace as usize] = self.client;
-    }
-
-    fn mapping_notify(&mut self) {
-        let mut event = unsafe { (*self.event).mapping };
-
-        if event.request == MappingKeyboard || event.request == MappingModifier {
-            unsafe { XRefreshKeyboardMapping(&mut event) };
-            self.input_grab();
-        }
-    }
-
-    fn window_delete(&mut self, window: Window) {
-        let mut x: *mut Client = null_mut();
-        let mut t: *mut Client = null_mut();
-        let mut c = self.client;
-
-        while !c.is_null() && unsafe { t != (*self.client).prev } {
-            if unsafe { (*c).window == window } {
-                x = c;
-            }
-
-            t = c;
-            c = unsafe { (*c).next };
-        }
-
-        if self.client.is_null() || x.is_null() {
-            return;
-        }
-
-        if unsafe { (*x).prev == x } {
-            self.client = null_mut();
-        }
-
-        if self.client == x {
-            self.client = unsafe { (*x).next };
-        }
-
-        if unsafe { !(*x).next.is_null() } {
-            unsafe { (*(*x).next).prev = (*x).prev };
-        }
-
-        if unsafe { !(*x).prev.is_null() } {
-            unsafe { (*(*x).prev).next = (*x).next };
-        }
-
-        self.workspaces[self.workspace as usize] = self.client;
-    }
-
-    fn notify_destroy(&mut self) {
-        unsafe { self.window_delete((*self.event).destroy_window.window) };
-
-        if !self.client.is_null() {
-            unsafe {
-                self.cursor = (*self.client).prev;
-
-                XSetInputFocus(
-                    self.display,
-                    (*self.cursor).window,
-                    RevertToParent,
-                    CurrentTime,
-                );
-            }
-        }
-    }
-
-    fn notify_enter(&mut self) {
-        while unsafe { XCheckTypedEvent(self.display, EnterNotify, self.event) > 0 } {
-            std::thread::yield_now();
-        }
-
-        let mut t: *mut Client = null_mut();
-        let mut c = self.client;
-
-        while !c.is_null() && unsafe { t != (*self.client).prev } {
-            if unsafe { (*c).window == (*self.event).crossing.window } {
-                self.cursor = c;
-
-                unsafe {
-                    XSetInputFocus(
-                        self.display,
-                        (*self.cursor).window,
-                        RevertToParent,
-                        CurrentTime,
-                    )
-                };
-            }
-
-            t = c;
-            c = unsafe { (*c).next };
-        }
-    }
-
-    unsafe fn notify_motion(&mut self) {
-        if (*self.mouse).subwindow == 0 || (*self.cursor).fullscreen {
-            return;
-        }
-
-        while XCheckTypedEvent(self.display, MotionNotify, self.event) > 0 {
-            std::thread::yield_now();
-        }
-
-        let dx = (*self.event).button.x_root - (*self.mouse).x_root;
-        let dy = (*self.event).button.y_root - (*self.mouse).y_root;
-
-        let x = self.workspace_x + if (*self.mouse).button == 1 { dx } else { 0 };
-        let y = self.workspace_y + if (*self.mouse).button == 1 { dy } else { 0 };
-        let width = max(
-            1,
-            self.workspace_width + if (*self.mouse).button == 3 { dx } else { 0 } as u32,
-        );
-        let height = max(
-            1,
-            self.workspace_height + if (*self.mouse).button == 3 { dy } else { 0 } as u32,
-        );
-
-        XMoveResizeWindow(self.display, (*self.mouse).subwindow, x, y, width, height);
     }
 }
 
