@@ -11,6 +11,7 @@ pub struct Windex<'a> {
     display: *mut Display,
     event: *mut XEvent,
     config: Config<'a>,
+    window: Window,
 }
 
 impl<'a> Windex<'a> {
@@ -31,6 +32,7 @@ impl<'a> Windex<'a> {
             display,
             event: null_mut(),
             config: Config::new(),
+            window: root_window,
         }
     }
 
@@ -71,7 +73,7 @@ impl<'a> Windex<'a> {
             if key.keysym == keysym {
                 match key.function {
                     Functions::WindowKill => self.window_kill(),
-                    Functions::Run(c, a) => self.run_command(c, a),
+                    Functions::Spawn(c, a) => self.spawn(c, a),
                 }
             }
         }
@@ -79,9 +81,11 @@ impl<'a> Windex<'a> {
 
     fn window_kill(&mut self) {
         // TODO: remove the window
+        println!("kill");
+        unsafe { XDestroyWindow(self.display, self.window) };
+        println!("done");
     }
-
-    fn run_command(&mut self, command: &'a str, args: &'a [&'a str]) {
+    fn spawn(&mut self, command: &'a str, args: &'a [&'a str]) {
         match fork() {
             Ok(Fork::Parent(_)) => {
                 if unsafe { XInitThreads() == 0 } {
@@ -90,14 +94,13 @@ impl<'a> Windex<'a> {
             }
             Ok(Fork::Child) => {
                 if !self.display.is_null() {
-                    // XXX: this might break shit
                     unsafe { close(XConnectionNumber(self.display)) };
                 }
 
                 Command::new(command)
                     .args(args)
                     .spawn()
-                    .unwrap_or_else(|_| panic!("failed to execute {}", command));
+                    .unwrap_or_else(|_| panic!("failed to spawn {}", command));
             }
             Err(e) => panic!("{}", e),
         }

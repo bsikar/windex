@@ -7,7 +7,7 @@ pub const MOD: c_uint = Mod1Mask;
 #[derive(Copy, Clone)]
 pub enum Functions<'a> {
     WindowKill,
-    Run(&'a str, &'a [&'a str]),
+    Spawn(&'a str, &'a [&'a str]),
 }
 
 #[derive(Copy, Clone)]
@@ -36,7 +36,7 @@ impl<'a> Config<'a> {
         use Functions::*;
 
         let keys = vec![
-            Key::new(MOD, XK_Return as u64, Run("st", &[])),
+            Key::new(MOD, XK_Return as u64, Spawn("st", &[])),
             Key::new(MOD, XK_q as u64, WindowKill),
         ];
 
