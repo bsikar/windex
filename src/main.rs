@@ -1,10 +1,11 @@
 use fork::{fork, Fork};
 use libc::close;
-use std::mem::MaybeUninit;
-use std::process::Command;
-use std::ptr::null;
+use std::{mem::MaybeUninit, process::Command, ptr::null};
 use x11::keysym::XK_Return;
-use x11::xlib::*;
+use x11::xlib::{
+    GrabModeAsync, KeyPress, Mod1Mask, True, XConnectionNumber, XDefaultRootWindow, XGrabKey,
+    XInitThreads, XKeysymToKeycode, XNextEvent, XOpenDisplay,
+};
 
 #[allow(non_upper_case_globals)]
 fn main() {
@@ -41,11 +42,11 @@ fn main() {
                     }
                     Ok(Fork::Child) => {
                         if !display.is_null() {
-                            // NOTE this might break shit
+                            // XXX: this might break shit
                             close(XConnectionNumber(display));
                         }
 
-                        Command::new("st")
+                        Command::new("ae")
                             .spawn()
                             .unwrap_or_else(|_| panic!("failed to execute st"));
                     }
